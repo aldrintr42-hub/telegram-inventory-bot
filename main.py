@@ -44,6 +44,24 @@ user_data_store = {}
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📍 Ingresa el punto de venta:")
     return PUNTO
+
+async def recibir_punto(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['punto'] = update.message.text.upper().strip()
+    await update.message.reply_text("📦 Selecciona el tipo de caja:", reply_markup=ReplyKeyboardMarkup([
+        ["CAJA A", "CAJA B"], ["CAJA C", "CAJA D"]], one_time_keyboard=True))
+    return CAJA
+
+async def recibir_caja(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['caja'] = update.message.text.upper().strip()
+    await update.message.reply_text("🔢 Escribe el número de acrílico (ej. 7):")
+    return ACRILICO
+
+async def recibir_acrilico(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['acrilico'] = update.message.text.strip()
+    context.user_data['contador'] = 1
+    await update.message.reply_text("📷 Envía la primera foto del acrílico")
+    return FOTOS
+
 async def recibir_foto(update: Update, context: ContextTypes.DEFAULT_TYPE):
     punto = context.user_data['punto']
     caja = context.user_data['caja']
@@ -79,7 +97,6 @@ async def recibir_foto(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("✅ Proceso finalizado. Usa /start para iniciar otro.")
         return ConversationHandler.END
-
 # SUBIR A DRIVE
 def subir_a_drive(filepath, filename):
     try:
