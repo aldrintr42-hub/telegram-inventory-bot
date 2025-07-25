@@ -11,7 +11,13 @@ from telegram.ext import (
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 from googleapiclient.errors import HttpError
-from google.oauth2 import service_account
+
+# --- CAMBIOS AQUI ---
+# Importamos las clases necesarias para OAuth de usuario
+from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request
+# --- FIN CAMBIOS ---
+
 import nest_asyncio
 nest_asyncio.apply()
 
@@ -26,21 +32,41 @@ acrilicos_opciones = [["ACRILICO 1", "ACRILICO 2", "ACRILICO 3"], ["ACRILICO 4",
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 GOOGLE_DRIVE_ROOT_FOLDER_ID = os.environ.get("GOOGLE_DRIVE_ROOT_FOLDER_ID")
 
+# --- NUEVAS VARIABLES DE ENTORNO PARA OAuth DE USUARIO ---
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
+GOOGLE_REFRESH_TOKEN = os.environ.get("GOOGLE_REFRESH_TOKEN")
+# --- FIN NUEVAS VARIABLES ---
+
 # ---------------- GOOGLE DRIVE ------------------
-def authenticate_google_drive_service_account():
+# --- MODIFICACION DE LA FUNCION DE AUTENTICACION ---
+def authenticate_google_drive_oauth_user():
     try:
-        b64_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
-        if not b64_json:
-            raise ValueError("Variable GOOGLE_SERVICE_ACCOUNT_JSON no configurada.")
-        service_account_info = json.loads(base64.b64decode(b64_json))
-        creds = service_account.Credentials.from_service_account_info(
-            service_account_info,
-            scopes=["https://www.googleapis.com/auth/drive"]
+        if not all([GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN]):
+            raise ValueError("Variables de entorno GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET o GOOGLE_REFRESH_TOKEN no configuradas.")
+
+        # Creamos un objeto Credentials a partir del token de refresco y los IDs del cliente
+        creds = Credentials(
+            token=None,  # El token de acceso será None inicialmente
+            refresh_token=GOOGLE_REFRESH_TOKEN,
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=GOOGLE_CLIENT_ID,
+            client_secret=GOOGLE_CLIENT_SECRET,
+            scopes=["https://www.googleapis.com/auth/drive"] # Asegúrate de usar el mismo scope
         )
+
+        # Refrescamos el token de acceso si es necesario
+        if not creds.valid:
+            # Si el token de acceso no es válido o ha expirado, usa el refresh_token para obtener uno nuevo
+            # Request() es el objeto HTTP para hacer la solicitud de refresh
+            creds.refresh(Request())
+
         return creds
     except Exception as e:
-        print(f"❌ Error en autenticación: {e}")
+        print(f"❌ Error en autenticación OAuth de usuario: {e}")
         return None
+# --- FIN MODIFICACION DE LA FUNCION DE AUTENTICACION ---
+
 
 def get_or_create_drive_folder_id(service, folder_name, parent_folder_id):
     query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and '{parent_folder_id}' in parents and trashed=false"
@@ -132,18 +158,25 @@ async def finalizar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     resumen = "\n".join([f"- {k}: {len(v)} foto(s)" for k, v in datos['fotos_dict'].items()])
     await update.message.reply_text(f"Guardando en Google Drive...\n{resumen}")
 
-    creds = authenticate_google_drive_service_account()
+    # --- CAMBIO AQUI: LLAMADA A LA NUEVA FUNCION DE AUTENTICACION ---
+    creds = authenticate_google_drive_oauth_user()
     if not creds:
         await update.message.reply_text("❌ Error con autenticación Google Drive.")
         return ConversationHandler.END
+    # --- FIN CAMBIO ---
 
     try:
         service = build('drive', 'v3', credentials=creds)
         punto = datos['punto_venta'].replace(" ", "_").upper()
         caja = datos['caja'].upper()
         folder_id = get_or_create_drive_folder_id(service, punto, GOOGLE_DRIVE_ROOT_FOLDER_ID)
+
+        if not folder_id: # Es importante verificar si la creación de la carpeta falló
+            await update.message.reply_text(f"❌ No se pudo crear/obtener la carpeta para '{punto}'.")
+            return ConversationHandler.END
+
         bot: Bot = context.bot
-        
+
         contador = 0
         for acrilico, fotos in datos['fotos_dict'].items():
             for i, file_id in enumerate(fotos):
@@ -154,13 +187,13 @@ async def finalizar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 media = MediaIoBaseUpload(photo_bytes_io, mimetype='image/jpeg', resumable=True)
                 nombre = f"{punto}_{caja}_{acrilico}_{i+1}.jpg"
-                metadata = {'name': nombre, 'parents': [folder_id]}
+                metadata = {'name': nombre, 'parents': [folder_id]} # Asegúrate de usar el folder_id obtenido
                 service.files().create(body=metadata, media_body=media, fields='id').execute()
                 contador += 1
 
         await update.message.reply_text(f"✔️ {contador} fotos subidas correctamente.")
     except Exception as e:
-        await update.message.reply_text(f"❌ Error subiendo fotos: {str(e)[:100]}")
+        await update.message.reply_text(f"❌ Error subiendo fotos: {str(e)[:100]}") # Limitar el mensaje para Telegram
 
     return ConversationHandler.END
 
@@ -171,6 +204,9 @@ async def cancelar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def stop_bot_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("👋 Deteniendo el bot.")
+    # Aquí el stop y shutdown son para detener el bot en su entorno de ejecución
+    # En Render, esto podría causar que el servicio se reinicie o falle si no se maneja correctamente
+    # Para un bot de larga duración, quizás prefieras simplemente que termine la conversación.
     await context.application.stop()
     await context.application.shutdown()
     return ConversationHandler.END
