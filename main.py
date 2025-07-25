@@ -189,7 +189,7 @@ async def finalizar(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 total_fotos += 1
 
                 # 🔔 Mensaje por cada foto subida
-                await update.message.reply_text(f"📁 Subida: {nombre}")
+                await update.message.reply_text(f"✅ Cargando: {nombre}")
 
         # ✅ RESUMEN DETALLADO
         resumen_fotos = "\n".join([f"  - {ac}: {len(fotos)} foto(s)" for ac, fotos in datos['fotos_dict'].items()])
